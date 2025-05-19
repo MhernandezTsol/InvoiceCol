@@ -87,6 +87,15 @@ const updateInvoiceFields = async (
       fieldValue: resultSend.invoiceResult.documento.tascode,
       urlMagaya,
     });
+    await setCustomFieldValue({
+      networkId: networkid,
+      accessKey: access_key,
+      type: "IN",
+      number: invoiceId,
+      fieldInternalName: "cufe_cancel",
+      fieldValue: resultSend.invoiceResult.documento.CUDE,
+      urlMagaya,
+    });
   }
 
   logger.info(
