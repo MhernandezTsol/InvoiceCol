@@ -66,10 +66,14 @@ const retryVerifyStatus = async (
       passLaFactura,
       dataStatus
     );
-    const { process, URL: url } = statusResult.invoiceResult.document;
+    const document = statusResult.invoiceResult.document;
+    const status = statusResult.invoiceResult.status;
 
     if (process !== 0) {
-      return { process, url };
+      return {
+        status,
+        document,
+      };
     }
 
     logger.info(
@@ -79,7 +83,7 @@ const retryVerifyStatus = async (
   }
 
   logger.warn("⚠️ Máximo de intentos de verificación alcanzado sin éxito.");
-  return { process: 0, url: null };
+  return { status: null, document: null };
 };
 
 /**
@@ -122,6 +126,31 @@ const processSingleInvoice = async (user, invoice, accessKey) => {
         transaction: invoiceId,
         urlMagaya,
       });
+
+      console.log(transactionData);
+
+      if (transactionData.errors.length > 0) {
+        await updateCustomField({
+          networkId: networkid,
+          accessKey,
+          type: "IN",
+          number: invoiceId,
+          fieldInternalName: CUSTOM_FIELDS.ESTADO_FACTURA,
+          fieldValue: INVOICE_STATUS.ERROR_EN_FACTURA_ELECTRONICA,
+          urlMagaya,
+        });
+        await updateCustomField({
+          networkId: networkid,
+          accessKey,
+          type: "IN",
+          number: invoiceId,
+          fieldInternalName: CUSTOM_FIELDS.INVOICE_MESSAGES,
+          fieldValue: transactionData.errors,
+          urlMagaya,
+        });
+        cache.del(`transaction_${invoiceId}`);
+        return "Falta información en la factura";
+      }
 
       if (!transactionData)
         throw new Error(`Sin datos de transacción para factura ${invoiceId}`);
@@ -218,19 +247,65 @@ const processSingleInvoice = async (user, invoice, accessKey) => {
       urlMagaya,
     });
 
-    const { process, url } = await retryVerifyStatus(
+    const { status, document } = await retryVerifyStatus(
       tasCode,
       userLaFactura,
       passLaFactura
     );
 
-    if (process === 2) {
+    if (document.process === 2) {
       await attachInvoice(
         { networkId: networkid, accessKey, number: invoiceId, urlMagaya },
         url
       );
       logger.info(`📎 Factura ${invoiceId} adjuntada correctamente.`);
     } else {
+      const transaction = {
+        intId: invoiceId,
+        type: "IN",
+        networkId: networkid,
+        guid: invoice.guid,
+        solicitudFactura: INVOICE_STATUS.PENDIENTE,
+        estadoFactura: INVOICE_STATUS.ERROR_EN_FACTURA_ELECTRONICA,
+      };
+
+      // Actualizar campos y caché en paralelo
+      await Promise.all([
+        updateCustomField({
+          networkId: networkid,
+          accessKey,
+          type: "IN",
+          number: invoiceId,
+          fieldInternalName: CUSTOM_FIELDS.INVOICE_MESSAGES,
+          fieldValue: document.enhancedInfo,
+          urlMagaya,
+        }),
+        (async () => {
+          await updateCustomField({
+            networkId: networkid,
+            accessKey,
+            type: "IN",
+            number: invoiceId,
+            fieldInternalName: CUSTOM_FIELDS.ESTADO_FACTURA,
+            fieldValue: transaction.estadoFactura,
+            urlMagaya,
+          });
+          await cacheTransactions([transaction]);
+        })(),
+        (async () => {
+          await updateCustomField({
+            networkId: networkid,
+            accessKey,
+            type: "IN",
+            number: invoiceId,
+            fieldInternalName: CUSTOM_FIELDS.SOLICITUD_FACTURA,
+            fieldValue: transaction.solicitudFactura,
+            urlMagaya,
+          });
+          await cacheTransactions([transaction]);
+        })(),
+      ]);
+
       logger.warn(
         `⚠️ No se pudo adjuntar la factura ${invoiceId} tras reintentos.`
       );

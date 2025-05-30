@@ -69,12 +69,17 @@ const getTransactionController = async (data) => {
       paymentType,
       errors
     );
-
-    return JSON.stringify(
-      { data: invoiceObj, errors: errors.length > 0 ? errors : null },
-      null,
-      2
+    console.log(
+      JSON.stringify(
+        { data: invoiceObj, errors: errors.length > 0 ? errors : null },
+        null,
+        2
+      )
     );
+    return {
+      data: invoiceObj,
+      errors: errors.length > 0 ? errors : null,
+    };
   } catch (error) {
     logger.error(`❌ Error al procesar transacción: ${error.message}`);
     return {
@@ -103,7 +108,7 @@ const validateInvoiceFields = (invoice, errors) => {
         "Charges.Charge",
         {
           path: "CustomFields.CustomField",
-          requiredNames: ["prefix", "paymentcode", "paymenttype"],
+          requiredNames: ["paymentcode", "paymenttype"],
         },
       ],
       "Invoice"
@@ -156,7 +161,7 @@ const buildInvoiceObject = async (
   const currency = invoice.TotalAmountInCurrency.Currency;
   const note1 = numberToWords(totalAmount, currency);
 
-  const customerInfoObj = await getCustomerInfo(invoice.Entity);
+  const customerInfoObj = await getCustomerInfo(errors, invoice.Entity);
   const totalAmountsObj = await totalAmounts(invoice);
   const itemsDetailsObj = await itemDetails(invoice.Charges.Charge);
   const retentionObj = await retentionItemsTax(invoice.Charges.Charge);
@@ -193,28 +198,64 @@ const buildInvoiceObject = async (
 /**
  * Extrae la información del cliente
  */
-const getCustomerInfo = (dataCustomer) => {
-  const customFieldEntity = dataCustomer.CustomFields.CustomField;
+const getCustomerInfo = (errors, dataCustomer) => {
+  const customFieldEntity = dataCustomer?.CustomFields?.CustomField;
+
+  const getOrError = (condition, message) => {
+    if (!condition) errors.push(message);
+    return condition;
+  };
+
+  const additionalAccountID = getCustomFieldValue(
+    customFieldEntity,
+    "additionalaccountid"
+  );
+  const documentType = getCustomFieldValue(customFieldEntity, "documenttype");
+  const email = getCustomFieldValue(customFieldEntity, "correo_facturacion");
+
   return {
-    additionalAccountID: getCustomFieldValue(
-      customFieldEntity,
-      "additionalaccountid"
+    additionalAccountID: getOrError(
+      additionalAccountID,
+      "Falta el campo adicional: additionalaccountid"
     )?.charAt(0),
-    name: dataCustomer.Name,
-    countryName: dataCustomer.Address.Country._,
-    countryCode: dataCustomer.Address.Country.Code,
-    city: dataCustomer.Address.City,
-    countrySubentity: dataCustomer.Address.ZipCode,
-    addressLine: Array.isArray(dataCustomer.Address.Street)
-      ? dataCustomer.Address.Street.join(" ")
-      : dataCustomer.Address.Street,
-    documentNumber: dataCustomer.EntityID,
-    documentType: getCustomFieldValue(customFieldEntity, "documenttype")
+    name: getOrError(dataCustomer?.Name, "Falta el campo: Name"),
+    countryName: getOrError(
+      dataCustomer?.Address?.Country?._,
+      "Falta el campo: Address.Country._"
+    ),
+    countryCode: getOrError(
+      dataCustomer?.Address?.Country?.Code,
+      "Falta el campo: Address.Country.Code"
+    ),
+    city: getOrError(
+      dataCustomer?.Address?.City,
+      "Falta el campo: Address.City"
+    ),
+    countrySubentity: getOrError(
+      dataCustomer?.Address?.ZipCode,
+      "Falta el campo: Address.ZipCode"
+    ),
+    addressLine: getOrError(
+      dataCustomer?.Address?.Street,
+      "Falta el campo: Address.Street"
+    )
+      ? Array.isArray(dataCustomer.Address.Street)
+        ? dataCustomer.Address.Street.join(" ")
+        : dataCustomer.Address.Street
+      : "",
+    documentNumber: getOrError(
+      dataCustomer?.EntityID,
+      "Falta el campo: EntityID"
+    ),
+    documentType: getOrError(
+      documentType,
+      "Falta el campo adicional: documenttype"
+    )
       ?.substring(0, 2)
       .trim(),
-    telephone: dataCustomer.Phone,
-    email: getCustomFieldValue(customFieldEntity, "correo_facturacion"),
-    internalID: dataCustomer.GUID,
+    telephone: getOrError(dataCustomer?.Phone, "Falta el campo: Phone"),
+    email: getOrError(email, "Falta el campo adicional: correo_facturacion"),
+    internalID: getOrError(dataCustomer?.GUID, "Falta el campo: GUID"),
   };
 };
 
